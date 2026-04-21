@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedded LCD Simulator</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 40px;
+            padding: 40px;
+            background-color: #f4f4f9;
+        }
+
+        .lcd-container {
+            background-color: #c9d6c2; /* Classic LCD background color */
+            padding: 20px;
+            border-radius: 8px;
+            border: 4px solid #333;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+            /* This filter will be adjusted by the light intensity slider */
+            filter: brightness(100%);
+            transition: filter 0.1s;
+        }
+
+        /* Default state for all segments is off (low opacity) */
+        .lcd-segment {
+            fill: #222;
+            opacity: 0.05; 
+            transition: opacity 0.05s;
+        }
+
+        /* Active state for segments */
+        .lcd-segment.active {
+            opacity: 0.85;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            min-width: 250px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        button:active {
+            background-color: #0056b3;
+        }
+
+        button.sim-btn {
+            background-color: #28a745;
+        }
+        button.sim-btn:active {
+            background-color: #1e7e34;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        #status {
+            font-size: 12px;
+            color: #d9534f;
+            font-weight: bold;
+        }
+        #status.connected {
+            color: #5cb85c;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="lcd-container" id="lcdScreen">
+        <svg width="200" height="200" viewBox="0 0 200 200">
+            </svg>
+    </div>
+
+    <div class="controls">
+        <h3>Hardware Controls</h3>
+        <div id="status">WebSocket: Disconnected</div>
+
+        <div class="control-group">
+            <label>Physical Buttons</label>
+            <div class="btn-group">
+                <button id="btnUp">Up</button>
+                <button id="btnPower">Power/Select</button>
+                <button id="btnDown">Down</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label for="lightSlider">Light Intensity (PWM)</label>
+            <input type="range" id="lightSlider" min="0" max="100" value="50">
+        </div>
+
+        <div class="control-group">
+            <label>Environment Simulation</label>
+            <button class="sim-btn" id="btnSimStripIn">Simulate Strip Entry</button>
+            <button class="sim-btn" id="btnSimBlood">Simulate Blood Drop</button>
+            <button class="sim-btn" id="btnSimStripOut">Simulate Strip Exit</button>
+        </div>
+    </div>
+
+    <script>
+        // --- WebSocket Setup ---
+        // Change the URL to match your local WebSocket server (e.g., run by your C test framework)
+        const wsUrl = 'ws://127.0.0.1:8083';
+        let ws;
+
+        function connectWebSocket() {
+            ws = new WebSocket(wsUrl);
+            const statusEl = document.getElementById('status');
+
+            ws.onopen = () => {
+                statusEl.textContent = 'WebSocket: Connected';
+                statusEl.className = 'connected';
+            };
+
+            ws.onclose = () => {
+                statusEl.textContent = 'WebSocket: Disconnected (Retrying...)';
+                statusEl.className = '';
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleIncomingMessage(data);
+                } catch (e) {
+                    console.error("Invalid JSON received:", event.data);
+                }
+            };
+        }
+
+        // --- Handle Messages from C Code ---
+        // Expected payload format: { "segment": "icon_blood_drop", "state": 1 }
+        function handleIncomingMessage(data) {
+            if (data.segment !== undefined && data.state !== undefined) {
+                const element = document.getElementById(data.segment);
+                if (element) {
+                    if (data.state === 1 || data.state === true) {
+                        element.classList.add('active');
+                    } else {
+                        element.classList.remove('active');
+                    }
+                } else {
+                    console.warn(`Segment ID '${data.segment}' not found in SVG.`);
+                }
+            }
+        }
+
+        // --- Send Messages to C Code ---
+        function sendAction(actionType, value = null) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const payload = { action: actionType };
+                if (value !== null) {
+                    payload.value = value;
+                }
+                ws.send(JSON.stringify(payload));
+                console.log("Sent:", payload);
+            } else {
+                console.warn("WebSocket not connected. Cannot send:", actionType);
+            }
+        }
+
+        // --- Event Listeners for UI Controls ---
+        document.getElementById('btnUp').addEventListener('mousedown', () => sendAction('BTN_UP_PRESSED'));
+        document.getElementById('btnUp').addEventListener('mouseup', () => sendAction('BTN_UP_RELEASED'));
+
+        document.getElementById('btnPower').addEventListener('mousedown', () => sendAction('BTN_POWER_PRESSED'));
+        document.getElementById('btnPower').addEventListener('mouseup', () => sendAction('BTN_POWER_RELEASED'));
+
+        document.getElementById('btnDown').addEventListener('mousedown', () => sendAction('BTN_DOWN_PRESSED'));
+        document.getElementById('btnDown').addEventListener('mouseup', () => sendAction('BTN_DOWN_RELEASED'));
+
+        const lightSlider = document.getElementById('lightSlider');
+        const lcdScreen = document.getElementById('lcdScreen');
+        lightSlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            // Visual effect on the browser
+            const brightness = 50 + (val / 2); // Map 0-100 to 50%-100% brightness
+            lcdScreen.style.filter = `brightness(${brightness}%)`;
+            // Send value to backend
+            sendAction('SET_BACKLIGHT', parseInt(val));
+        });
+
+        document.getElementById('btnSimStripIn').addEventListener('click', () => sendAction('SIM_STRIP_INSERTED'));
+        document.getElementById('btnSimBlood').addEventListener('click', () => sendAction('SIM_BLOOD_APPLIED'));
+        document.getElementById('btnSimStripOut').addEventListener('click', () => sendAction('SIM_STRIP_REMOVED'));
+
+        // Initialize connection
+        connectWebSocket();
+    </script>
+</body>
+</html>
